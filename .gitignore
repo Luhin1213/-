@@ -1,6 +1,7 @@
 .env
 app/credentials.json
 app/credentials.json.json
+mafia_club.db
 __pycache__/
 *.pyc
 venv/
