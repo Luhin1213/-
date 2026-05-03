@@ -1,0 +1,527 @@
+# app/database/queries.py
+import aiosqlite
+from typing import Optional, List
+from app.config import DATABASE_PATH, ADMIN_IDS
+
+
+# ══════════════════════════════════════════════
+# КОРИСТУВАЧІ
+# ══════════════════════════════════════════════
+
+async def get_or_create_user(telegram_id: int, username: str, full_name: str) -> dict:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        row = await cur.fetchone()
+        if row:
+            return dict(row)
+        await db.execute(
+            "INSERT INTO users (telegram_id,username,full_name) VALUES (?,?,?)",
+            (telegram_id, username, full_name)
+        )
+        await db.commit()
+        cur = await db.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        return dict(await cur.fetchone())
+
+
+async def get_user_by_telegram_id(telegram_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def is_admin(telegram_id: int) -> bool:
+    if telegram_id in ADMIN_IDS:
+        return True
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT is_admin FROM users WHERE telegram_id=?", (telegram_id,)
+        )
+        row = await cur.fetchone()
+        return bool(row and row[0])
+
+
+async def save_user_phone(telegram_id: int, phone: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET phone=? WHERE telegram_id=?", (phone, telegram_id)
+        )
+        await db.commit()
+
+
+# ══════════════════════════════════════════════
+# ГРАВЦІ
+# ══════════════════════════════════════════════
+
+async def get_player_by_linked_user(telegram_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT p.* FROM players p
+            JOIN users u ON p.linked_user_id=u.id
+            WHERE u.telegram_id=?
+        """, (telegram_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_player_by_id(player_db_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM players WHERE id=?", (player_db_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_player_by_player_id(player_id: str) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM players WHERE player_id=?", (player_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_player_by_nickname(nickname: str) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM players WHERE nickname LIKE ? LIMIT 1",
+            (f"%{nickname}%",)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def search_players(query: str) -> List[dict]:
+    """Пошук гравців за частиною нікнейму."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM players WHERE nickname LIKE ? ORDER BY nickname COLLATE NOCASE LIMIT 20",
+            (f"%{query}%",)
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_all_players_sorted() -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM players ORDER BY nickname COLLATE NOCASE ASC"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_top_players(limit: int = 10) -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM players ORDER BY rating DESC LIMIT ?", (limit,)
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def link_player_to_user(player_db_id: int, user_db_id: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE players SET linked_user_id=? WHERE id=?", (user_db_id, player_db_id)
+        )
+        await db.commit()
+
+
+async def create_player_auto(nickname: str, telegram_id: int,
+                              username: str, full_name: str) -> dict:
+    """
+    Автоматична реєстрація: створює гравця і одразу прив'язує до Telegram.
+    player_id генерується як TG_{telegram_id}.
+    """
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        player_id = f"TG_{telegram_id}"
+
+        # Перевіряємо чи вже є такий гравець
+        cur = await db.execute(
+            "SELECT * FROM players WHERE player_id=?", (player_id,)
+        )
+        existing = await cur.fetchone()
+        if existing:
+            return dict(existing)
+
+        # Отримуємо user_db_id
+        cur = await db.execute(
+            "SELECT id FROM users WHERE telegram_id=?", (telegram_id,)
+        )
+        user_row = await cur.fetchone()
+        user_db_id = user_row[0] if user_row else None
+
+        await db.execute("""
+            INSERT INTO players (player_id, nickname, linked_user_id)
+            VALUES (?,?,?)
+        """, (player_id, nickname, user_db_id))
+
+        cur2 = await db.execute(
+            "SELECT id FROM players WHERE player_id=?", (player_id,)
+        )
+        p_row = await cur2.fetchone()
+        p_id  = p_row[0]
+
+        # Створюємо гаманець
+        await db.execute(
+            "INSERT OR IGNORE INTO wallets (player_id,balance,frozen_balance) VALUES (?,0,0)",
+            (p_id,)
+        )
+        await db.commit()
+
+        cur3 = await db.execute("SELECT * FROM players WHERE id=?", (p_id,))
+        return dict(await cur3.fetchone())
+
+
+async def upsert_player(data: dict):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO players
+                (player_id,nickname,games_played,rating,status,
+                 rank_position,wins,survived,city_wins,mafia_wins,updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now'))
+            ON CONFLICT(player_id) DO UPDATE SET
+                nickname=excluded.nickname,
+                games_played=excluded.games_played,
+                rating=excluded.rating,
+                status=excluded.status,
+                rank_position=excluded.rank_position,
+                wins=excluded.wins,
+                survived=excluded.survived,
+                city_wins=excluded.city_wins,
+                mafia_wins=excluded.mafia_wins,
+                updated_at=datetime('now')
+        """, (
+            data["player_id"], data["nickname"],
+            data.get("games_played",0), data.get("rating",0),
+            data.get("status","Новачок"), data.get("rank_position",0),
+            data.get("wins",0), data.get("survived",0),
+            data.get("city_wins",0), data.get("mafia_wins",0),
+        ))
+        cur = await db.execute(
+            "SELECT id FROM players WHERE player_id=?", (data["player_id"],)
+        )
+        row = await cur.fetchone()
+        if row:
+            await db.execute(
+                "INSERT OR IGNORE INTO wallets (player_id,balance,frozen_balance) VALUES (?,0,0)",
+                (row[0],)
+            )
+        await db.commit()
+
+
+# ══════════════════════════════════════════════
+# ГАМАНЦІ
+# ══════════════════════════════════════════════
+
+async def get_wallet(player_db_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM wallets WHERE player_id=?", (player_db_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def change_balance(player_db_id: int, amount: int,
+                         op_type: str, comment: str, done_by: int = 0):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT balance FROM wallets WHERE player_id=?", (player_db_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            await db.execute(
+                "INSERT INTO wallets (player_id,balance) VALUES (?,?)",
+                (player_db_id, max(0, amount))
+            )
+        else:
+            new_bal = row[0] + amount
+            if new_bal < 0:
+                raise ValueError(f"Недостатньо шепот на балансі")
+            await db.execute(
+                "UPDATE wallets SET balance=?,updated_at=datetime('now') WHERE player_id=?",
+                (new_bal, player_db_id)
+            )
+        await db.execute(
+            "INSERT INTO transactions (player_id,type,amount,comment,created_by_user_id) "
+            "VALUES (?,?,?,?,?)",
+            (player_db_id, op_type, abs(amount), comment, done_by)
+        )
+        await db.commit()
+
+
+async def freeze_chips(player_db_id: int, amount: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT balance,frozen_balance FROM wallets WHERE player_id=?", (player_db_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise ValueError("Гаманець не знайдено")
+        bal, frozen = row
+        if (bal - frozen) < amount:
+            raise ValueError(f"Недостатньо доступних шепот")
+        await db.execute(
+            "UPDATE wallets SET frozen_balance=frozen_balance+? WHERE player_id=?",
+            (amount, player_db_id)
+        )
+        await db.commit()
+
+
+async def unfreeze_chips(player_db_id: int, amount: int):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE wallets SET frozen_balance=MAX(0,frozen_balance-?) WHERE player_id=?",
+            (amount, player_db_id)
+        )
+        await db.commit()
+
+
+# ══════════════════════════════════════════════
+# ТРАНЗАКЦІЇ
+# ══════════════════════════════════════════════
+
+async def get_transactions(player_db_id: int,
+                           limit: int = 5,
+                           offset: int = 0) -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM transactions
+            WHERE player_id=?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        """, (player_db_id, limit, offset))
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def count_transactions(player_db_id: int) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT COUNT(*) FROM transactions WHERE player_id=?", (player_db_id,)
+        )
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
+
+# ══════════════════════════════════════════════
+# БОНУСИ
+# ══════════════════════════════════════════════
+
+async def get_active_bonus_types() -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM bonus_types WHERE is_active=1 ORDER BY amount_min ASC"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_bonus_type(bonus_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM bonus_types WHERE id=?", (bonus_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+# ══════════════════════════════════════════════
+# СТАВКИ
+# ══════════════════════════════════════════════
+
+async def create_bet(creator_id: int, bet_type: str, amount: int,
+                     target_player_id: Optional[int] = None,
+                     target_number: Optional[int] = None,
+                     side_color: Optional[str] = None,
+                     coefficient: float = 2.0,
+                     created_by_admin: int = 0) -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute("""
+            INSERT INTO bets
+                (creator_player_id,bet_type,amount,target_player_id,
+                 target_number,side_color,coefficient,status,created_by_admin)
+            VALUES (?,?,?,?,?,?,?,'pending_admin',?)
+        """, (creator_id, bet_type, amount, target_player_id,
+              target_number, side_color, coefficient, created_by_admin))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_active_bets() -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT b.*, p1.nickname AS creator_nickname
+            FROM bets b
+            JOIN players p1 ON b.creator_player_id=p1.id
+            WHERE b.status IN ('pending_admin','open','duel')
+            ORDER BY b.created_at DESC
+        """)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_open_redness_bets() -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT b.*, p.nickname AS creator_nickname
+            FROM bets b JOIN players p ON b.creator_player_id=p.id
+            WHERE b.bet_type='redness' AND b.status='open'
+            ORDER BY b.created_at DESC
+        """)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_bet(bet_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM bets WHERE id=?", (bet_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def update_bet_status(bet_id: int, status: str,
+                             result: Optional[str] = None,
+                             opponent_id: Optional[int] = None):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        if result:
+            await db.execute(
+                "UPDATE bets SET status=?,result=?,resolved_at=datetime('now') WHERE id=?",
+                (status, result, bet_id)
+            )
+        elif opponent_id:
+            await db.execute(
+                "UPDATE bets SET status=?,opponent_player_id=? WHERE id=?",
+                (status, opponent_id, bet_id)
+            )
+        else:
+            await db.execute("UPDATE bets SET status=? WHERE id=?", (status, bet_id))
+        await db.commit()
+
+
+async def get_player_bets(player_db_id: int) -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM bets WHERE creator_player_id=?
+            ORDER BY created_at DESC LIMIT 20
+        """, (player_db_id,))
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+# ══════════════════════════════════════════════
+# ВИТРАТИ
+# ══════════════════════════════════════════════
+
+async def create_spending(player_id: int, spend_type: str, amount: int,
+                          target_number: Optional[int] = None,
+                          comment: str = "") -> int:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute("""
+            INSERT INTO spendings
+                (player_id,spend_type,amount,target_number,comment,status)
+            VALUES (?,?,?,?,?,'pending')
+        """, (player_id, spend_type, amount, target_number, comment))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_pending_spendings() -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT s.*, p.nickname AS player_nickname
+            FROM spendings s JOIN players p ON s.player_id=p.id
+            WHERE s.status='pending'
+            ORDER BY s.created_at ASC
+        """)
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_spending(spending_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM spendings WHERE id=?", (spending_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def resolve_spending(spending_id: int, status: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE spendings SET status=?,resolved_at=datetime('now') WHERE id=?",
+            (status, spending_id)
+        )
+        await db.commit()
+
+
+# ══════════════════════════════════════════════
+# ЩОДЕННИК
+# ══════════════════════════════════════════════
+
+async def get_diary_dates() -> List[str]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT game_date FROM diary_entries ORDER BY game_date DESC"
+        )
+        rows = await cur.fetchall()
+        return [r[0] for r in rows]
+
+
+async def get_diary_entries_by_date(game_date: str) -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM diary_entries WHERE game_date=? ORDER BY game_number ASC",
+            (game_date,)
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_diary_entry(entry_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute(
+            "SELECT * FROM diary_entries WHERE id=?", (entry_id,)
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def upsert_diary_entry(game_date: str, game_number: str,
+                              title: str, full_text: str):
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        # Перевіряємо чи вже є такий запис
+        cur = await db.execute(
+            "SELECT id FROM diary_entries WHERE game_date=? AND game_number=?",
+            (game_date, game_number)
+        )
+        row = await cur.fetchone()
+        if row:
+            await db.execute(
+                "UPDATE diary_entries SET title=?,full_text=? WHERE id=?",
+                (title, full_text, row[0])
+            )
+        else:
+            await db.execute(
+                "INSERT INTO diary_entries (game_date,game_number,title,full_text) VALUES (?,?,?,?)",
+                (game_date, game_number, title, full_text)
+            )
+        await db.commit()
