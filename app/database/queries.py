@@ -525,3 +525,118 @@ async def upsert_diary_entry(game_date: str, game_number: str,
                 (game_date, game_number, title, full_text)
             )
         await db.commit()
+
+
+# ══════════════════════════════════════════════
+# ЛОГИ ПАРТІЙ
+# ══════════════════════════════════════════════
+
+async def upsert_game_log(game_date: str, game_number: int,
+                           winner_faction: str, raw_log: str):
+    """Зберігає або оновлює лог партії."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO game_logs (game_date, game_number, winner_faction, raw_log, synced_at)
+            VALUES (?,?,?,?,datetime('now'))
+            ON CONFLICT(game_date, game_number) DO UPDATE SET
+                winner_faction = excluded.winner_faction,
+                raw_log        = excluded.raw_log,
+                synced_at      = datetime('now')
+        """, (game_date, game_number, winner_faction, raw_log))
+        await db.commit()
+
+
+async def get_game_logs_without_diary(limit: int = 20) -> List[dict]:
+    """Партії для яких ще не згенеровано щоденник."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM game_logs
+            WHERE diary_generated = 0
+            ORDER BY game_date DESC, game_number DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_all_game_logs(limit: int = 50) -> List[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("""
+            SELECT * FROM game_logs
+            ORDER BY game_date DESC, game_number DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+
+
+async def get_game_log(log_id: int) -> Optional[dict]:
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("SELECT * FROM game_logs WHERE id=?", (log_id,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def mark_diary_generated(log_id: int, diary_text: str):
+    """Позначає лог як оброблений і зберігає згенерований текст."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            UPDATE game_logs SET diary_generated=1, diary_text=?
+            WHERE id=?
+        """, (diary_text, log_id))
+        await db.commit()
+
+
+async def update_player_points(nickname: str, points_data: dict):
+    """Оновлює бали гравця з таблиці Логів."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            UPDATE players SET
+                points_lose    = ?,
+                points_survive = ?,
+                points_win     = ?,
+                points_host    = ?,
+                points_best    = ?,
+                points_guess   = ?,
+                points_total   = ?,
+                updated_at     = datetime('now')
+            WHERE nickname = ?
+        """, (
+            points_data.get("lose", 0),
+            points_data.get("survive", 0),
+            points_data.get("win", 0),
+            points_data.get("host", 0),
+            points_data.get("best", 0),
+            points_data.get("guess", 0),
+            points_data.get("total", 0),
+            nickname,
+        ))
+        await db.commit()
+
+
+# ══════════════════════════════════════════════
+# МОВА КОРИСТУВАЧА
+# ══════════════════════════════════════════════
+
+async def get_user_language(telegram_id: int) -> str:
+    """Повертає мову користувача: 'UA' або 'RU'. Default = 'UA'."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute(
+            "SELECT language FROM users WHERE telegram_id=?", (telegram_id,)
+        )
+        row = await cur.fetchone()
+        if row and row[0]:
+            return row[0]
+        return "UA"
+
+
+async def set_user_language(telegram_id: int, lang: str):
+    """Зберігає мову користувача ('UA' або 'RU')."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE users SET language=? WHERE telegram_id=?", (lang, telegram_id)
+        )
+        await db.commit()

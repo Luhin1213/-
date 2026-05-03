@@ -146,3 +146,20 @@ SPEND_TYPE_UA = {
     "discount_50":  "🏷️ Знижка 50%",
     "discount_100": "🆓 Знижка 100%",
 }
+
+
+def format_points(player: dict) -> str:
+    """Показує розбивку балів гравця з таблиці Логи."""
+    total = player.get("points_total", 0)
+    if total == 0:
+        return ""
+    return (
+        f"\n\n🏅 <b>Бали (з таблиці Логи):</b>\n"
+        f"  Виграш: {player.get('points_win', 0)}\n"
+        f"  Виживання: {player.get('points_survive', 0)}\n"
+        f"  Програш: {player.get('points_lose', 0)}\n"
+        f"  Від ведучого: {player.get('points_host', 0)}\n"
+        f"  Кращий гравець: {player.get('points_best', 0)}\n"
+        f"  Угадав ролі: {player.get('points_guess', 0)}\n"
+        f"  <b>Всього: {total}</b>"
+    )
