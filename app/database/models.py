@@ -14,7 +14,6 @@ async def init_db():
                 full_name   TEXT,
                 phone       TEXT,
                 is_admin    INTEGER DEFAULT 0,
-                language    TEXT DEFAULT 'UA',
                 created_at  TEXT DEFAULT (datetime('now'))
             )
         """)
@@ -33,14 +32,6 @@ async def init_db():
                 survived        INTEGER DEFAULT 0,
                 city_wins       INTEGER DEFAULT 0,
                 mafia_wins      INTEGER DEFAULT 0,
-                -- Бали з Логів (розбивка по типах)
-                points_lose     INTEGER DEFAULT 0,
-                points_survive  INTEGER DEFAULT 0,
-                points_win      INTEGER DEFAULT 0,
-                points_host     INTEGER DEFAULT 0,
-                points_best     INTEGER DEFAULT 0,
-                points_guess    INTEGER DEFAULT 0,
-                points_total    INTEGER DEFAULT 0,
                 updated_at      TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY (linked_user_id) REFERENCES users(id)
             )
@@ -80,6 +71,8 @@ async def init_db():
             )
         """)
 
+        # bet_type: redness | against | side | night_death
+        # status:   pending_admin | open | duel | closed | cancelled
         await db.execute("""
             CREATE TABLE IF NOT EXISTS bets (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,22 +110,6 @@ async def init_db():
             )
         """)
 
-        # Логи партій (сирий текст з GameDetails)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS game_logs (
-                id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                game_date       TEXT NOT NULL,
-                game_number     INTEGER NOT NULL,
-                winner_faction  TEXT,
-                raw_log         TEXT,
-                diary_generated INTEGER DEFAULT 0,
-                diary_text      TEXT,
-                synced_at       TEXT DEFAULT (datetime('now')),
-                UNIQUE(game_date, game_number)
-            )
-        """)
-
-        # Записи щоденника (згенеровані ШІ або ручні)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS diary_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,21 +123,21 @@ async def init_db():
 
         await db.commit()
 
-        # Стандартні бонуси
+        # Стандартні бонуси — сортовані за кількістю шепот
         cur = await db.execute("SELECT COUNT(*) FROM bonus_types")
         if (await cur.fetchone())[0] == 0:
             bonuses = [
-                ("Краща прощальна промова",  1, 1),
-                ("Акторська гра",            1, 1),
-                ("Від ГМ'а",                 1, 1),
-                ("Кращий гравець",           1, 1),
-                ("Вгадав 2 ролі при смерті", 1, 1),
-                ("Вгадав 3 ролі при смерті", 2, 2),
-                ("Привів друга",             2, 2),
-                ("Сторіс з рекламою Клубу",  2, 2),
-                ("Пост з рекламою Клубу",    3, 3),
-                ("Новачок",                  3, 3),
-                ("День Народження",          3, 3),
+                ("Краща прощальна промова",      1, 1),
+                ("Акторська гра",                1, 1),
+                ("Від ГМ'а",                     1, 1),
+                ("Кращий гравець",               1, 1),
+                ("Вгадав 2 ролі при смерті",     1, 1),
+                ("Вгадав 3 ролі при смерті",     2, 2),
+                ("Привів друга",                 2, 2),
+                ("Сторіс з рекламою Клубу",      2, 2),
+                ("Пост з рекламою Клубу",        3, 3),
+                ("Новачок",                      3, 3),
+                ("День Народження",              3, 3),
             ]
             await db.executemany(
                 "INSERT INTO bonus_types (name,amount_min,amount_max) VALUES (?,?,?)",

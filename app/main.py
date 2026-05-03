@@ -10,7 +10,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import BOT_TOKEN
 from app.database.models import init_db
-from app.handlers import common, player, admin, bets, spendings, diary, help_handler
+from app.handlers import common, player, admin, bets, spendings, diary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +34,6 @@ async def main():
     dp.include_router(bets.router)
     dp.include_router(spendings.router)
     dp.include_router(diary.router)
-    dp.include_router(help_handler.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Бот запущений і готовий до роботи!")

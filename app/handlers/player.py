@@ -3,40 +3,32 @@ import logging
 from typing import Optional
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton
 
 from app.database.queries import (
     get_player_by_linked_user, get_wallet,
     get_transactions, count_transactions,
     get_top_players, get_all_players_sorted,
-    get_user_language,
 )
 from app.keyboards.main_kb import rating_keyboard, history_nav_keyboard
 from app.utils.formatters import (
     format_profile, format_wallet_short,
-    format_transactions_page, format_rating, format_points,
+    format_transactions_page, format_rating,
 )
 
 logger = logging.getLogger(__name__)
 router = Router()
+
 PER_PAGE = 5
 
 
 async def _get_player(message: Message) -> Optional[dict]:
     p = await get_player_by_linked_user(message.from_user.id)
     if not p:
-        await message.answer("😔 Профіль не знайдено.\nНапишіть /start щоб зареєструватись.")
+        await message.answer(
+            "😔 Профіль не знайдено.\n"
+            "Напиши /start щоб зареєструватись."
+        )
     return p
-
-
-def lang_switch_keyboard() -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.row(
-        InlineKeyboardButton(text="🇺🇦 Українська", callback_data="setlang_UA"),
-        InlineKeyboardButton(text="🇷🇺 Русский",    callback_data="setlang_RU"),
-    )
-    return b.as_markup()
 
 
 # ── Профіль ──────────────────────────────────────────────────
@@ -46,12 +38,7 @@ async def my_profile(message: Message):
     p = await _get_player(message)
     if not p:
         return
-    text = format_profile(p) + format_points(p)
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=lang_switch_keyboard()
-    )
+    await message.answer(format_profile(p), parse_mode="HTML")
 
 
 # ── Фішки ────────────────────────────────────────────────────
@@ -124,7 +111,7 @@ async def rating_all(callback: CallbackQuery):
     await callback.answer()
 
 
-# ── Історія операцій ─────────────────────────────────────────
+# ── Історія операцій (по 5, з пагінацією) ───────────────────
 
 @router.message(F.text == "📋 Історія операцій")
 async def op_history(message: Message):
@@ -139,6 +126,7 @@ async def _send_history_page(target, player_db_id: int, page: int, edit: bool = 
     txs   = await get_transactions(player_db_id, limit=PER_PAGE, offset=page * PER_PAGE)
     text  = format_transactions_page(txs, page, total, PER_PAGE)
     kb    = history_nav_keyboard(player_db_id, page, total, PER_PAGE)
+
     if edit:
         await target.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
     else:
@@ -147,8 +135,9 @@ async def _send_history_page(target, player_db_id: int, page: int, edit: bool = 
 
 @router.callback_query(F.data.startswith("hist_"))
 async def history_page_cb(callback: CallbackQuery):
-    parts        = callback.data.split("_")
-    player_db_id = int(parts[1])
-    page         = int(parts[2])
+    # format: hist_{player_db_id}_{page}
+    parts         = callback.data.split("_")
+    player_db_id  = int(parts[1])
+    page          = int(parts[2])
     await _send_history_page(callback, player_db_id, page, edit=True)
     await callback.answer()

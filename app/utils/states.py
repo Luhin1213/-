@@ -3,7 +3,6 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class RegState(StatesGroup):
-    choose_lang    = State()
     enter_nickname = State()
 
 
@@ -34,8 +33,8 @@ class LinkPlayerState(StatesGroup):
 
 class AdminBetState(StatesGroup):
     choose_type      = State()
-    enter_creator_no = State()
-    enter_target_no  = State()
+    enter_creator_no = State()   # номер гравця що ставить (1-15)
+    enter_target_no  = State()   # номер цілі (1-15)
     enter_amount     = State()
 
 
