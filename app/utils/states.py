@@ -3,8 +3,9 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class RegState(StatesGroup):
-    choose_lang    = State()
-    enter_nickname = State()
+    choose_lang      = State()
+    enter_nickname   = State()
+    confirm_nickname = State()  # вибір зі схожих нікнеймів з таблиці
 
 
 class AddChipsState(StatesGroup):

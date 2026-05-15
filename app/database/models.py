@@ -13,9 +13,10 @@ async def init_db():
                 username    TEXT,
                 full_name   TEXT,
                 phone       TEXT,
-                is_admin    INTEGER DEFAULT 0,
                 language    TEXT DEFAULT 'UA',
-                created_at  TEXT DEFAULT (datetime('now'))
+                is_admin    INTEGER DEFAULT 0,
+                created_at       TEXT DEFAULT (datetime('now')),
+                group_message_id INTEGER DEFAULT 0
             )
         """)
 
@@ -27,13 +28,12 @@ async def init_db():
                 linked_user_id  INTEGER,
                 games_played    INTEGER DEFAULT 0,
                 rating          REAL DEFAULT 0,
-                status          TEXT DEFAULT 'Новачок',
+                status          TEXT DEFAULT 'Перехожий',
                 rank_position   INTEGER DEFAULT 0,
                 wins            INTEGER DEFAULT 0,
                 survived        INTEGER DEFAULT 0,
                 city_wins       INTEGER DEFAULT 0,
                 mafia_wins      INTEGER DEFAULT 0,
-                -- Бали з Логів (розбивка по типах)
                 points_lose     INTEGER DEFAULT 0,
                 points_survive  INTEGER DEFAULT 0,
                 points_win      INTEGER DEFAULT 0,
@@ -41,6 +41,7 @@ async def init_db():
                 points_best     INTEGER DEFAULT 0,
                 points_guess    INTEGER DEFAULT 0,
                 points_total    INTEGER DEFAULT 0,
+                fols            INTEGER DEFAULT 0,
                 updated_at      TEXT DEFAULT (datetime('now')),
                 FOREIGN KEY (linked_user_id) REFERENCES users(id)
             )
@@ -117,7 +118,6 @@ async def init_db():
             )
         """)
 
-        # Логи партій (сирий текст з GameDetails)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS game_logs (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +132,6 @@ async def init_db():
             )
         """)
 
-        # Записи щоденника (згенеровані ШІ або ручні)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS diary_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,13 +139,75 @@ async def init_db():
                 game_number TEXT NOT NULL,
                 title       TEXT NOT NULL,
                 full_text   TEXT,
-                created_at  TEXT DEFAULT (datetime('now'))
+                created_at       TEXT DEFAULT (datetime('now')),
+                group_message_id INTEGER DEFAULT 0
+            )
+        """)
+
+        # Збори (оголошення ігор)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gatherings (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_date   TEXT NOT NULL,
+                game_time   TEXT,
+                location    TEXT,
+                description TEXT,
+                max_players INTEGER DEFAULT 13,
+                status      TEXT DEFAULT 'active',
+                created_by  INTEGER,
+                created_at       TEXT DEFAULT (datetime('now')),
+                group_message_id INTEGER DEFAULT 0
+            )
+        """)
+
+        # Записи гравців на збори
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS gathering_signups (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                gathering_id INTEGER NOT NULL,
+                player_id    INTEGER NOT NULL,
+                signed_up_at TEXT DEFAULT (datetime('now')),
+                UNIQUE(gathering_id, player_id),
+                FOREIGN KEY (gathering_id) REFERENCES gatherings(id),
+                FOREIGN KEY (player_id)    REFERENCES players(id)
             )
         """)
 
         await db.commit()
 
-        # Стандартні бонуси
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS pending_payouts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                player_id   INTEGER NOT NULL,
+                amount      INTEGER NOT NULL,
+                comment     TEXT,
+                created_by  INTEGER,
+                created_at  TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (player_id) REFERENCES players(id)
+            )
+        """)
+
+        # ── Автоматичні міграції ─────────────────────────────
+        # Додаємо нові колонки якщо їх ще немає (без видалення бази)
+        migrations = [
+            ("players", "fols",            "INTEGER DEFAULT 0"),
+            ("players", "points_lose",     "INTEGER DEFAULT 0"),
+            ("players", "points_survive",  "INTEGER DEFAULT 0"),
+            ("players", "points_win",      "INTEGER DEFAULT 0"),
+            ("players", "points_host",     "INTEGER DEFAULT 0"),
+            ("players", "points_best",     "INTEGER DEFAULT 0"),
+            ("players", "points_guess",    "INTEGER DEFAULT 0"),
+            ("players", "points_total",    "INTEGER DEFAULT 0"),
+            ("users",   "language",        "TEXT DEFAULT 'UA'"),
+            ("gatherings", "group_message_id", "INTEGER DEFAULT 0"),
+        ]
+        for table, col, col_def in migrations:
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                await db.commit()
+            except Exception:
+                pass  # Колонка вже існує — ігноруємо
+
         cur = await db.execute("SELECT COUNT(*) FROM bonus_types")
         if (await cur.fetchone())[0] == 0:
             bonuses = [
