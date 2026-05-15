@@ -140,11 +140,22 @@ async def sync_players_from_sheets() -> Tuple[int, str]:
         if not rows:
             return 0, "Таблиця статистики порожня."
         col_map = {
-            "player_id":"player_id", "nickname":"nickname",
-            "games_played":"games_played", "rating":"rating",
-            "status":"status", "rank_position":"rank_position",
-            "wins":"wins", "survived":"survived",
-            "city_wins":"city_wins", "mafia_wins":"mafia_wins",
+            # Назва колонки в Sheets : поле в SQLite
+            "player_id":    "player_id",
+            "nickname":     "nickname",
+            "нікнейм":      "nickname",       # MAFIAGAME Players
+            "ігри":         "games_played",   # MAFIAGAME Players
+            "games_played": "games_played",
+            "загальні бали":"rating",          # MAFIAGAME Players → рейтинг
+            "rating":       "rating",
+            "status":       "status",
+            "rank_position":"rank_position",
+            "бали за виграш":  "wins",         # MAFIAGAME Players
+            "wins":            "wins",
+            "бали за виживання": "survived",   # MAFIAGAME Players
+            "survived":        "survived",
+            "city_wins":    "city_wins",
+            "mafia_wins":   "mafia_wins",
         }
         count = 0
         for row in rows:
@@ -205,7 +216,13 @@ async def sync_diary_from_sheets() -> Tuple[int, str]:
             game_date   = str(r.get("game_date",   "")).strip()
             game_number = str(r.get("game_number", "")).strip()
             title       = str(r.get("title",       "")).strip()
-            full_text   = str(r.get("full_text",   "")).strip()
+            # Зберігаємо переноси рядків з Google Sheets
+            raw_text  = str(r.get("full_text", ""))
+            # Нормалізуємо переноси рядків
+            raw_text  = raw_text.replace("\r\n", "\n").replace("\r", "\n")
+            # Замінюємо текстовий \n (два символи) на реальний перенос
+            raw_text  = raw_text.replace("\\n", "\n")
+            full_text = raw_text.strip()
 
             if not game_date or not game_number or not title:
                 continue
@@ -217,3 +234,46 @@ async def sync_diary_from_sheets() -> Tuple[int, str]:
     except Exception as e:
         logger.error(f"Помилка синхронізації щоденника: {e}")
         return 0, f"Помилка: {e}"
+
+
+async def write_diary_to_sheets(game_date: str, game_number: str,
+                                 title: str, full_text: str) -> bool:
+    """
+    Записує або оновлює запис щоденника в Google Sheets лист «Щоденник».
+    Структура: game_date | game_number | title | full_text
+    """
+    if not GOOGLE_SHEET_ID:
+        return False
+    try:
+        client      = _get_client(write=True)
+        spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+        try:
+            sheet = spreadsheet.worksheet(GOOGLE_DIARY_SHEET_NAME)
+        except Exception:
+            sheet = spreadsheet.add_worksheet(
+                title=GOOGLE_DIARY_SHEET_NAME, rows=1000, cols=4
+            )
+            sheet.update("A1:D1", [["game_date","game_number","title","full_text"]])
+            sheet.format("A1:D1", {"textFormat": {"bold": True}})
+
+        all_vals = sheet.get_all_values()
+        # Шукаємо чи вже є такий запис
+        existing_row = None
+        for i, row in enumerate(all_vals):
+            if i == 0:
+                continue
+            if len(row) >= 2 and str(row[0]).strip() == game_date and str(row[1]).strip() == game_number:
+                existing_row = i + 1
+                break
+
+        if existing_row:
+            sheet.update(f"C{existing_row}:D{existing_row}", [[title, full_text]])
+        else:
+            sheet.append_row([game_date, game_number, title, full_text],
+                              value_input_option="USER_ENTERED")
+
+        logger.info(f"Щоденник записано в Sheets: {game_date} #{game_number}")
+        return True
+    except Exception as e:
+        logger.error(f"write_diary_to_sheets помилка: {e}")
+        return False

@@ -2,9 +2,8 @@
 import logging
 from typing import Optional
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import InlineKeyboardButton
 
 from app.database.queries import (
     get_player_by_linked_user, get_wallet,
@@ -13,10 +12,8 @@ from app.database.queries import (
     get_user_language,
 )
 from app.keyboards.main_kb import rating_keyboard, history_nav_keyboard
-from app.utils.formatters import (
-    format_profile, format_wallet_short,
-    format_transactions_page, format_rating, format_points,
-)
+from app.utils.formatters import format_profile, format_transactions_page, format_rating, format_points, chips
+from app.utils.i18n import ui, get_status_by_games
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -26,52 +23,32 @@ PER_PAGE = 5
 async def _get_player(message: Message) -> Optional[dict]:
     p = await get_player_by_linked_user(message.from_user.id)
     if not p:
-        await message.answer("😔 Профіль не знайдено.\nНапишіть /start щоб зареєструватись.")
+        lang = await get_user_language(message.from_user.id)
+        await message.answer(ui("no_profile", lang))
     return p
-
-
-def lang_switch_keyboard() -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.row(
-        InlineKeyboardButton(text="🇺🇦 Українська", callback_data="setlang_UA"),
-        InlineKeyboardButton(text="🇷🇺 Русский",    callback_data="setlang_RU"),
-    )
-    return b.as_markup()
 
 
 # ── Профіль ──────────────────────────────────────────────────
 
-@router.message(F.text == "👤 Мій профіль")
+@router.message(F.text.in_(["👤 Мій профіль", "👤 Мой профиль"]))
 async def my_profile(message: Message):
     p = await _get_player(message)
     if not p:
         return
-    text = format_profile(p) + format_points(p)
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=lang_switch_keyboard()
-    )
-
-
-# ── Фішки ────────────────────────────────────────────────────
-
-@router.message(F.text == "🎰 Мої фішки")
-async def my_chips(message: Message):
-    p = await _get_player(message)
-    if not p:
-        return
+    lang   = await get_user_language(message.from_user.id)
     wallet = await get_wallet(p["id"])
     txs    = await get_transactions(p["id"], limit=3)
-    await message.answer(format_wallet_short(wallet, txs), parse_mode="HTML")
+    text   = format_profile(p, wallet, txs, lang) + format_points(p)
+    await message.answer(text, parse_mode="HTML")
 
 
 # ── Рейтинг ──────────────────────────────────────────────────
 
 @router.message(F.text == "🏆 Рейтинг")
 async def rating_menu(message: Message):
+    lang = await get_user_language(message.from_user.id)
     await message.answer(
-        "🏆 <b>Рейтинг гравців</b>",
+        f"🏆 <b>{ui('rating_title', lang)}</b>",
         parse_mode="HTML",
         reply_markup=rating_keyboard()
     )
@@ -79,23 +56,32 @@ async def rating_menu(message: Message):
 
 @router.callback_query(F.data == "rat_my")
 async def rating_my(callback: CallbackQuery):
-    p = await get_player_by_linked_user(callback.from_user.id)
+    lang = await get_user_language(callback.from_user.id)
+    p    = await get_player_by_linked_user(callback.from_user.id)
     if not p:
-        await callback.answer("Профіль не знайдено.", show_alert=True)
+        await callback.answer(ui("no_profile", lang), show_alert=True)
         return
     ranked = sorted(await get_all_players_sorted(),
-                    key=lambda x: x.get("rating", 0), reverse=True)
+                    key=lambda x: x.get("points_total", 0), reverse=True)
     pos    = next((i+1 for i, x in enumerate(ranked) if x["id"] == p["id"]), None)
     wallet = await get_wallet(p["id"])
     bal    = wallet["balance"] if wallet else 0
     frz    = wallet["frozen_balance"] if wallet else 0
+    status = get_status_by_games(p.get("games_played", 0), lang)
+
+    title   = ui("rating_my", lang)
+    place   = ui("rating_place", lang)
+    from_   = ui("rating_from", lang)
+    whisp   = ui("rating_whispers", lang)
+    avail   = ui("rating_avail", lang)
+
     await callback.message.edit_text(
-        f"📍 <b>Мій рейтинг</b>\n\n"
-        f"Гравець: <b>{p['nickname']}</b>\n"
-        f"Рейтинг: <b>{p.get('rating',0):.1f}</b>\n"
-        f"Місце: <b>#{pos}</b> з {len(ranked)}\n"
-        f"Статус: {p.get('status','Новачок')}\n\n"
-        f"🎰 Шепоти: {bal} (доступно {bal-frz})",
+        f"📍 <b>{title}</b>\n\n"
+        f"{'Гравець' if lang=='UA' else 'Игрок'}: <b>{p['nickname']}</b>\n"
+        f"{ui('rating_status', lang)}: <b>{status}</b>\n"
+        f"{'Рейтинг' if lang=='UA' else 'Рейтинг'}: <b>{p.get('rating',0):.1f}</b>\n"
+        f"{place}: <b>#{pos}</b> {from_} {len(ranked)}\n\n"
+        f"🎰 {whisp}: {bal} ({avail} {bal-frz})",
         parse_mode="HTML",
         reply_markup=rating_keyboard()
     )
@@ -104,29 +90,29 @@ async def rating_my(callback: CallbackQuery):
 
 @router.callback_query(F.data == "rat_top10")
 async def rating_top10(callback: CallbackQuery):
-    players = await get_top_players(10)
+    players = await get_all_players_sorted()
+    ranked  = sorted(players, key=lambda x: x.get("points_total", 0), reverse=True)[:10]
     await callback.message.edit_text(
-        format_rating(players, "Топ-10"),
-        parse_mode="HTML",
-        reply_markup=rating_keyboard()
+        format_rating(ranked, "Топ-10"),
+        parse_mode="HTML", reply_markup=rating_keyboard()
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "rat_all")
 async def rating_all(callback: CallbackQuery):
-    players = await get_top_players(50)
+    players = await get_all_players_sorted()
+    ranked  = sorted(players, key=lambda x: x.get("points_total", 0), reverse=True)
     await callback.message.edit_text(
-        format_rating(players, "Загальний рейтинг"),
-        parse_mode="HTML",
-        reply_markup=rating_keyboard()
+        format_rating(ranked, "Загальний рейтинг"),
+        parse_mode="HTML", reply_markup=rating_keyboard()
     )
     await callback.answer()
 
 
 # ── Історія операцій ─────────────────────────────────────────
 
-@router.message(F.text == "📋 Історія операцій")
+@router.message(F.text.in_(["📋 Історія операцій", "📋 История операций"]))
 async def op_history(message: Message):
     p = await _get_player(message)
     if not p:

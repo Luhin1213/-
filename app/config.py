@@ -40,3 +40,13 @@ USERINFOBOT_LINK = "https://t.me/userinfobot"
 
 if not BOT_TOKEN:
     raise ValueError("❌ Токен бота не задано! Перевір файл .env")
+
+# ── Groq API ───────────────────────────────────────────────
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+
+# ── Telegram група ───────────────────────────────────────────
+GROUP_ID: int = int(os.getenv("GROUP_ID", "-1002198467706"))
+ANNOUNCEMENTS_THREAD_ID: int = int(os.getenv("ANNOUNCEMENTS_THREAD_ID", "2698"))
+
+# Лист "История Операций" в Bankir-Bot
+HISTORY_SHEET_NAME: str = os.getenv("HISTORY_SHEET_NAME", "История Операций")

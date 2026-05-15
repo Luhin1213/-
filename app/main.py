@@ -1,16 +1,17 @@
 # app/main.py
-import sys
-import os
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import asyncio
-import logging
+import asyncio, logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.config import BOT_TOKEN
 from app.database.models import init_db
-from app.handlers import common, player, admin, bets, spendings, diary, help_handler
+from app.handlers import (
+    common, player, admin, bets, spendings,
+    diary, help_handler, gathering, group_handler,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,6 +36,8 @@ async def main():
     dp.include_router(spendings.router)
     dp.include_router(diary.router)
     dp.include_router(help_handler.router)
+    dp.include_router(gathering.router)
+    dp.include_router(group_handler.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Бот запущений і готовий до роботи!")
