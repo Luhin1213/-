@@ -102,6 +102,7 @@ def whispers_admin_keyboard(lang: str = "UA") -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🎁 Видати бонус",          callback_data="whisp_bonus"))
     b.row(InlineKeyboardButton(text="💸 Видати всі шепоти",     callback_data="whisp_payout_all"))
     b.row(InlineKeyboardButton(text="📋 Історія операцій",      callback_data="whisp_history"))
+    b.row(InlineKeyboardButton(text="❌ Закрити",               callback_data="close_msg"))
     return b.as_markup()
 
 
@@ -115,6 +116,7 @@ def bets_menu_keyboard(lang: str = "UA") -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="⚔️ Ставка на Гравця",            callback_data="bet_against"))
     b.row(InlineKeyboardButton(text="🎯 На перемогу сторони",         callback_data="bet_side"))
     b.row(InlineKeyboardButton(text="💀 Смерть вночі (×3, 1 шепот)", callback_data="bet_night_death"))
+    b.row(InlineKeyboardButton(text="❌ Закрити",                     callback_data="close_msg"))
     return b.as_markup()
 
 
@@ -122,6 +124,7 @@ def admin_bets_keyboard(lang: str = "UA") -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="📊 Активні ставки",    callback_data="admin_active_bets"))
     b.row(InlineKeyboardButton(text="🎲 Ставка від гравця", callback_data="admin_player_bet"))
+    b.row(InlineKeyboardButton(text="❌ Закрити",           callback_data="close_msg"))
     return b.as_markup()
 
 
@@ -236,7 +239,10 @@ def spending_menu_keyboard() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏷️ Знижка 50% — 10 🎰",              callback_data="spend_discount_50"))
     b.row(InlineKeyboardButton(text="🆓 Знижка 100% — 18 🎰",             callback_data="spend_discount_100"))
     b.row(InlineKeyboardButton(text="🃏 Стати Персонажем Карти — 20 🎰",  callback_data="spend_become_char"))
-    b.row(InlineKeyboardButton(text="💀 Мертві →",                         callback_data="spend_dead_menu"))
+    b.row(
+        InlineKeyboardButton(text="💀 Мертві →",  callback_data="spend_dead_menu"),
+        InlineKeyboardButton(text="❌ Закрити",    callback_data="close_msg"),
+    )
     return b.as_markup()
 
 
@@ -291,6 +297,7 @@ def diary_dates_keyboard(dates: List[str]) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for i, d in enumerate(dates):
         b.row(InlineKeyboardButton(text=f"📅 {d}", callback_data=f"ddate_{i}"))
+    b.row(InlineKeyboardButton(text="❌ Закрити", callback_data="close_msg"))
     return b.as_markup()
 
 
@@ -329,9 +336,10 @@ def rating_keyboard() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
         InlineKeyboardButton(text="📍 Моє місце",   callback_data="rat_my"),
-        InlineKeyboardButton(text="🏆 Топ-10",       callback_data="rat_top10"),
+        InlineKeyboardButton(text="🏆 Топ-15",       callback_data="rat_top15"),
         InlineKeyboardButton(text="📊 Весь рейтинг", callback_data="rat_all"),
     )
+    b.row(InlineKeyboardButton(text="❌ Закрити", callback_data="close_msg"))
     return b.as_markup()
 
 

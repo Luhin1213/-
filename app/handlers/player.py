@@ -9,7 +9,7 @@ from app.database.queries import (
     get_player_by_linked_user, get_wallet,
     get_transactions, count_transactions,
     get_top_players, get_all_players_sorted,
-    get_user_language,
+    get_user_language, get_player_game_stats,
 )
 from app.keyboards.main_kb import rating_keyboard, history_nav_keyboard
 from app.utils.formatters import format_profile, format_transactions_page, format_rating, format_points, chips
@@ -38,7 +38,17 @@ async def my_profile(message: Message):
     lang   = await get_user_language(message.from_user.id)
     wallet = await get_wallet(p["id"])
     txs    = await get_transactions(p["id"], limit=3)
-    text   = format_profile(p, wallet, txs, lang) + format_points(p)
+
+    # Динамічне місце в рейтингу
+    ranked  = sorted(await get_all_players_sorted(),
+                     key=lambda x: x.get("points_total", 0), reverse=True)
+    rank_pos = next((i + 1 for i, x in enumerate(ranked) if x["id"] == p["id"]), 0)
+
+    # Статистика з логів (виживаємість і перемоги)
+    game_stats = await get_player_game_stats(p["nickname"])
+
+    text = format_profile(p, wallet, txs, lang,
+                          rank_pos=rank_pos, game_stats=game_stats) + format_points(p)
     await message.answer(text, parse_mode="HTML")
 
 
@@ -88,12 +98,12 @@ async def rating_my(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "rat_top10")
-async def rating_top10(callback: CallbackQuery):
+@router.callback_query(F.data == "rat_top15")
+async def rating_top15(callback: CallbackQuery):
     players = await get_all_players_sorted()
-    ranked  = sorted(players, key=lambda x: x.get("points_total", 0), reverse=True)[:10]
+    ranked  = sorted(players, key=lambda x: x.get("points_total", 0), reverse=True)[:15]
     await callback.message.edit_text(
-        format_rating(ranked, "Топ-10"),
+        format_rating(ranked, "Топ-15"),
         parse_mode="HTML", reply_markup=rating_keyboard()
     )
     await callback.answer()

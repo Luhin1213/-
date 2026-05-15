@@ -20,6 +20,7 @@ from app.config import (
 from app.database.queries import (
     update_player_points,
     upsert_game_log,
+    upsert_game_player_stat,
 )
 
 logger = logging.getLogger(__name__)
@@ -210,10 +211,13 @@ async def sync_game_details() -> Tuple[int, str]:
                     return headers.index(v)
             return None
 
-        idx_date    = col_idx(["дата", "date"])
-        idx_num     = col_idx(["№ партії", "№ партії", "# партії", "номер партії", "no"])
-        idx_winner  = col_idx(["переможна фракція", "переможець", "winner"])
-        idx_log     = col_idx([LOGS_TEXT_COLUMN.lower(), "логи", "log", "лог", "текст"])
+        idx_date     = col_idx(["дата", "date"])
+        idx_num      = col_idx(["№ партії", "№ партії", "# партії", "номер партії", "no"])
+        idx_winner   = col_idx(["переможна фракція", "переможець", "winner"])
+        idx_log      = col_idx([LOGS_TEXT_COLUMN.lower(), "логи", "log", "лог", "текст"])
+        idx_nickname = col_idx(["нікнейм", "nickname"])
+        idx_survive  = col_idx(["бали за виживання", "points_survive"])
+        idx_win_pts  = col_idx(["бали за виграш", "points_win"])
 
         if idx_date is None or idx_num is None:
             return 0, (
@@ -221,8 +225,29 @@ async def sync_game_details() -> Tuple[int, str]:
                 f"Знайдені заголовки: {', '.join(all_values[0][:10])}"
             )
 
-        # Групуємо рядки по партіях
+        def _normalize_faction(faction: str) -> str:
+            f = faction.lower().strip()
+            if any(x in f for x in ["місто", "misto", "city", "мирн", "червон", "red", "жовт"]):
+                return "red"
+            if any(x in f for x in ["маф", "mafia", "black", "чорн"]):
+                return "black"
+            if any(x in f for x in ["нейтрал", "neutral", "grey", "gray", "сір"]):
+                return "grey"
+            return faction
+
+        def _safe_int(row, idx):
+            if idx is None or idx >= len(row):
+                return 0
+            try:
+                v = str(row[idx]).strip()
+                return int(float(v)) if v and v not in ("-", "None") else 0
+            except (ValueError, TypeError):
+                return 0
+
+        # Групуємо рядки по партіях + збираємо per-player статистику
         games: dict = {}  # key=(date, num) → {winner, log_lines}
+        player_stats: list = []  # (date, num, nickname, survived, won, winner_faction)
+
         for row in all_values[1:]:
             if not row or len(row) <= max(filter(None, [idx_date, idx_num])):
                 continue
@@ -243,6 +268,21 @@ async def sync_game_details() -> Tuple[int, str]:
             if log_val:
                 games[key]["log_lines"].append(log_val)
 
+            # Per-player статистика
+            if idx_nickname is not None and idx_nickname < len(row):
+                nick = str(row[idx_nickname]).strip()
+                if nick and nick.lower() not in ("", "none", "нікнейм", "nickname"):
+                    survive_pts = _safe_int(row, idx_survive)
+                    win_pts     = _safe_int(row, idx_win_pts)
+                    survived    = 1 if survive_pts > 0 else 0
+                    won         = 1 if win_pts     > 0 else 0
+                    winner_norm = _normalize_faction(winner_val) if winner_val else ""
+                    try:
+                        gnum = int(float(num_val)) if num_val else 0
+                    except (ValueError, TypeError):
+                        gnum = 0
+                    player_stats.append((date_val, gnum, nick, survived, won, winner_norm))
+
         count = 0
         for (date_val, num_val), data in games.items():
             if not date_val:
@@ -255,6 +295,10 @@ async def sync_game_details() -> Tuple[int, str]:
             raw_log = "\n".join(data["log_lines"])
             await upsert_game_log(date_val, game_number, data["winner"], raw_log)
             count += 1
+
+        # Зберігаємо per-player статистику
+        for stat in player_stats:
+            await upsert_game_player_stat(*stat)
 
         return count, ""
     except Exception as e:

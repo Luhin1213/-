@@ -301,7 +301,6 @@ async def change_balance(player_db_id: int, amount: int,
         await db.commit()
     # Фоновий запис в Google Sheets "История Операций"
     try:
-        cur2 = await aiosqlite.connect(DATABASE_PATH).__aenter__()
         async with aiosqlite.connect(DATABASE_PATH) as db2:
             nc = await db2.execute("SELECT nickname FROM players WHERE id=?", (player_db_id,))
             nrow = await nc.fetchone()
@@ -705,91 +704,6 @@ async def set_user_language(telegram_id: int, lang: str):
 # ЗБОРИ ГРИ
 # ══════════════════════════════════════════════
 
-async def create_gathering(game_date: str, game_time: str,
-                            location: str, description: str,
-                            created_by: int) -> int:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        cur = await db.execute("""
-            INSERT INTO game_gatherings
-                (game_date, game_time, location, description, created_by)
-            VALUES (?,?,?,?,?)
-        """, (game_date, game_time, location, description, created_by))
-        await db.commit()
-        return cur.lastrowid
-
-
-async def get_active_gatherings() -> List[dict]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("""
-            SELECT g.*,
-                   (SELECT COUNT(*) FROM gathering_signups s WHERE s.gathering_id=g.id) AS signup_count
-            FROM game_gatherings g
-            WHERE g.status='active'
-            ORDER BY g.game_date ASC
-        """)
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
-
-
-async def get_gathering(gathering_id: int) -> Optional[dict]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT * FROM game_gatherings WHERE id=?", (gathering_id,))
-        row = await cur.fetchone()
-        return dict(row) if row else None
-
-
-async def cancel_gathering(gathering_id: int):
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        await db.execute(
-            "UPDATE game_gatherings SET status='cancelled' WHERE id=?", (gathering_id,)
-        )
-        await db.commit()
-
-
-async def signup_for_gathering(gathering_id: int, player_id: int) -> bool:
-    """Записує гравця на збір. Повертає True якщо успішно, False якщо вже записаний."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        try:
-            await db.execute(
-                "INSERT INTO gathering_signups (gathering_id, player_id) VALUES (?,?)",
-                (gathering_id, player_id)
-            )
-            await db.commit()
-            return True
-        except Exception:
-            return False
-
-
-async def get_gathering_signups(gathering_id: int) -> List[dict]:
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("""
-            SELECT p.nickname, s.signed_up_at
-            FROM gathering_signups s
-            JOIN players p ON s.player_id=p.id
-            WHERE s.gathering_id=?
-            ORDER BY s.signed_up_at ASC
-        """, (gathering_id,))
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
-
-
-async def get_all_linked_users() -> List[dict]:
-    """Всі користувачі що мають прив'язаного гравця — для масових розсилок."""
-    async with aiosqlite.connect(DATABASE_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        cur = await db.execute("""
-            SELECT u.telegram_id, u.language, p.nickname
-            FROM users u
-            JOIN players p ON p.linked_user_id=u.id
-            WHERE u.telegram_id IS NOT NULL
-        """)
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
-
-
 # ══════════════════════════════════════════════
 # ЗБОРИ
 # ══════════════════════════════════════════════
@@ -956,3 +870,51 @@ async def has_pending_payouts() -> bool:
         cur = await db.execute("SELECT COUNT(*) FROM pending_payouts")
         row = await cur.fetchone()
         return row[0] > 0
+
+
+# ══════════════════════════════════════════════
+# СТАТИСТИКА ГРАВЦІВ З ЛОГІВ (game_player_stats)
+# ══════════════════════════════════════════════
+
+async def upsert_game_player_stat(game_date: str, game_number: int, nickname: str,
+                                   survived: int, won: int, winner_faction: str):
+    """Зберігає або оновлює статистику гравця за окрему партію."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("""
+            INSERT INTO game_player_stats
+                (game_date, game_number, nickname, survived, won, winner_faction)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(game_date, game_number, nickname) DO UPDATE SET
+                survived       = excluded.survived,
+                won            = excluded.won,
+                winner_faction = excluded.winner_faction
+        """, (game_date, game_number, nickname, survived, won, winner_faction))
+        await db.commit()
+
+
+async def get_player_game_stats(nickname: str) -> dict:
+    """Повертає агреговану статистику гравця з логів (4 сезон)."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        cur = await db.execute("""
+            SELECT
+                COUNT(*)                                                        AS games,
+                SUM(survived)                                                   AS survived,
+                SUM(CASE WHEN won=1 AND winner_faction='red'   THEN 1 ELSE 0 END) AS red_wins,
+                SUM(CASE WHEN won=1 AND winner_faction='black' THEN 1 ELSE 0 END) AS black_wins,
+                SUM(CASE WHEN won=1 AND winner_faction='grey'  THEN 1 ELSE 0 END) AS grey_wins,
+                SUM(won)                                                        AS total_wins
+            FROM game_player_stats
+            WHERE nickname = ? COLLATE NOCASE
+        """, (nickname,))
+        row = await cur.fetchone()
+        if row and row[0]:
+            return {
+                "games":      row[0] or 0,
+                "survived":   row[1] or 0,
+                "red_wins":   row[2] or 0,
+                "black_wins": row[3] or 0,
+                "grey_wins":  row[4] or 0,
+                "total_wins": row[5] or 0,
+            }
+        return {"games": 0, "survived": 0, "red_wins": 0, "black_wins": 0,
+                "grey_wins": 0, "total_wins": 0}

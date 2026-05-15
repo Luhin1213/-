@@ -133,6 +133,19 @@ async def init_db():
         """)
 
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS game_player_stats (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_date      TEXT NOT NULL,
+                game_number    INTEGER NOT NULL,
+                nickname       TEXT NOT NULL,
+                survived       INTEGER DEFAULT 0,
+                won            INTEGER DEFAULT 0,
+                winner_faction TEXT,
+                UNIQUE(game_date, game_number, nickname)
+            )
+        """)
+
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS diary_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 game_date   TEXT NOT NULL,
@@ -200,6 +213,7 @@ async def init_db():
             ("players", "points_total",    "INTEGER DEFAULT 0"),
             ("users",   "language",        "TEXT DEFAULT 'UA'"),
             ("gatherings", "group_message_id", "INTEGER DEFAULT 0"),
+            ("game_player_stats", "winner_faction", "TEXT"),
         ]
         for table, col, col_def in migrations:
             try:

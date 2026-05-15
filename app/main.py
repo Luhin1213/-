@@ -20,6 +20,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+SYNC_INTERVAL_HOURS = 6
+
+
+async def sync_all_data():
+    """Синхронізує всі дані з Google Sheets → SQLite."""
+    from app.services.logs_service import sync_logs_players, sync_game_details
+    from app.services.sheets_service import sync_players_from_sheets, sync_diary_from_sheets
+    logger.info("⏳ Авто-синхронізація даних з Google Sheets...")
+    try:
+        cnt, err = await sync_logs_players()
+        logger.info(f"  Players (логи): {cnt} {'— ' + err if err else 'OK'}")
+    except Exception as e:
+        logger.error(f"  sync_logs_players: {e}")
+    try:
+        cnt, err = await sync_game_details()
+        logger.info(f"  GameDetails: {cnt} {'— ' + err if err else 'OK'}")
+    except Exception as e:
+        logger.error(f"  sync_game_details: {e}")
+    try:
+        cnt, err = await sync_players_from_sheets()
+        logger.info(f"  Статистика: {cnt} {'— ' + err if err else 'OK'}")
+    except Exception as e:
+        logger.error(f"  sync_players_from_sheets: {e}")
+    try:
+        cnt, err = await sync_diary_from_sheets()
+        logger.info(f"  Щоденник: {cnt} {'— ' + err if err else 'OK'}")
+    except Exception as e:
+        logger.error(f"  sync_diary_from_sheets: {e}")
+    logger.info("✅ Авто-синхронізація завершена")
+
+
+async def auto_sync_loop():
+    """Авто-синхронізація кожні 6 годин."""
+    while True:
+        await asyncio.sleep(SYNC_INTERVAL_HOURS * 3600)
+        await sync_all_data()
+
 
 async def main():
     logger.info("Запускаю бот клубу Мафія...")
@@ -40,6 +77,12 @@ async def main():
     dp.include_router(group_handler.router)
 
     await bot.delete_webhook(drop_pending_updates=True)
+
+    # Перша синхронізація при старті
+    asyncio.create_task(sync_all_data())
+    # Авто-синхронізація кожні 6 годин
+    asyncio.create_task(auto_sync_loop())
+
     logger.info("Бот запущений і готовий до роботи!")
 
     try:

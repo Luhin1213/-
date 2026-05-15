@@ -61,23 +61,44 @@ def _city_capture_phrase(red_wins: int, black_wins: int, lang: str) -> str:
 
 
 def format_profile(player: dict, wallet: Optional[dict],
-                   txs: Optional[List[dict]], lang: str = "UA") -> str:
-    games    = player.get("games_played", 0)
-    survived = player.get("survived", 0)
+                   txs: Optional[List[dict]], lang: str = "UA",
+                   rank_pos: int = 0, game_stats: Optional[dict] = None) -> str:
+    games  = player.get("games_played", 0)
+    nick   = player.get("nickname", "")
+    fols   = player.get("fols", 0)
+    p_lose  = player.get("points_lose",    0)
+    p_surv  = player.get("points_survive", 0)
+    p_win   = player.get("points_win",     0)
+    p_host  = player.get("points_host",    0)
+    p_best  = player.get("points_best",    0)
+    p_guess = player.get("points_guess",   0)
+    p_total = player.get("points_total",   0)
 
-    # Перемоги по сторонах — спочатку з Excel словника
-    nick = player.get("nickname", "")
-    pw   = PLAYER_WINS.get(nick, {})
-    red_w   = pw.get("red",   player.get("city_wins",  0))
-    black_w = pw.get("black", player.get("mafia_wins", 0))
-    grey_w  = pw.get("grey",  0)
-    total_w = pw.get("total", player.get("wins", 0))
+    status = get_status_by_games(games, lang)
 
-    best = player.get("points_best", 0)
-    host = player.get("points_host", 0)
+    # Місце в рейтингу — динамічно або з БД
+    rank_display = f"#{rank_pos}" if rank_pos else f"#{player.get('rank_position', '—')}"
 
-    status  = get_status_by_games(games, lang)
-    surv_pct = f"{survived/SEASON_4_GAMES*100:.0f}%" if SEASON_4_GAMES else "—"
+    # Виживаємість і перемоги — з логів (4 сезон) якщо є, інакше fallback
+    if game_stats and game_stats.get("games", 0) > 0:
+        gs        = game_stats
+        games_log = gs["games"]
+        surv_log  = gs["survived"]
+        red_w     = gs["red_wins"]
+        black_w   = gs["black_wins"]
+        grey_w    = gs["grey_wins"]
+        total_w   = gs["total_wins"]
+        surv_pct  = f"{surv_log / games_log * 100:.0f}%"
+        surv_detail = f"{surv_log} з {games_log}"
+    else:
+        # Fallback: Excel словник → потім дані з БД
+        pw      = PLAYER_WINS.get(nick, {})
+        red_w   = pw.get("red",   player.get("city_wins",  0))
+        black_w = pw.get("black", player.get("mafia_wins", 0))
+        grey_w  = pw.get("grey",  0)
+        total_w = pw.get("total", player.get("wins", 0))
+        surv_pct    = f"{p_surv / games * 100:.0f}%" if games > 0 else "—"
+        surv_detail = f"{p_surv} з {games}"
 
     # Захоплення міста
     city_phrase = _city_capture_phrase(SEASON_4_RED, SEASON_4_BLACK, lang)
@@ -99,15 +120,15 @@ def format_profile(player: dict, wallet: Optional[dict],
                 f"  Всего: <b>{bal}</b>  |  Доступно: <b>{avail}</b>  |  Заморожено: {frz}"
             )
 
-    # Останні 3 операції з детальним описом
+    # Останні 3 операції
     ops_block = ""
     if txs:
         label = "Останні операції:" if lang == "UA" else "Последние операции:"
         lines = [f"\n\n📋 <b>{label}</b>"]
         for tx in txs[:3]:
-            comm  = tx.get("comment", "")
+            comm   = tx.get("comment", "")
             amount = tx.get("amount", 0)
-            tp    = tx.get("type", "")
+            tp     = tx.get("type", "")
             if tp in ("add", "bonus"):
                 sign = "+"
                 icon = "🎁" if tp == "bonus" else "➕"
@@ -120,28 +141,15 @@ def format_profile(player: dict, wallet: Optional[dict],
             lines.append(f"  {icon} {sign}{chips(amount)} — {comm[:45]}")
         ops_block = "\n".join(lines)
 
-    # Рандомна фраза
     phrase = random.choice(RANDOM_PHRASES)
-
-    fols    = player.get("fols", 0)
-    p_lose  = player.get("points_lose",    0)
-    p_surv  = player.get("points_survive", 0)
-    p_win   = player.get("points_win",     0)
-    p_host  = player.get("points_host",    0)
-    p_best  = player.get("points_best",    0)
-    p_guess = player.get("points_guess",   0)
-    p_total = player.get("points_total",   0)
-
-    # Виживаємість = p_surv / games * 100 (від власних ігор, не сезону)
-    surv_pct = f"{p_surv/games*100:.0f}%" if games > 0 else "—"
 
     return (
         f"👤 <b>{nick}</b>\n"
         f"⭐ Статус: <b>{status}</b>\n"
-        f"📍 Місце в рейтингу: #{player.get('rank_position','—')}\n\n"
+        f"📍 Місце в рейтингу: {rank_display}\n\n"
         f"🎮 <b>Статистика — 4 Сезон:</b>\n"
         f"  Ігри: <b>{games}</b>  |  Фоли: <b>{fols}</b>\n"
-        f"  Виживаємість: <b>{surv_pct}</b> ({p_surv} з {games})\n\n"
+        f"  Виживаємість: <b>{surv_pct}</b> ({surv_detail})\n\n"
         f"📊 <b>Бали:</b>\n"
         f"  За програш: {p_lose}  |  За виживання: {p_surv}\n"
         f"  За виграш: {p_win}  |  Від ведучого: {p_host}\n"

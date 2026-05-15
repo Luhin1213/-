@@ -1,7 +1,7 @@
 # app/handlers/common.py
 import asyncio, logging, os, sys
 from aiogram import Router, F, Bot
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -166,6 +166,15 @@ async def _do_register(message, state: FSMContext, bot, nickname: str, lang: str
     )
     await bot.send_message(u.id, welcome, parse_mode="HTML", disable_web_page_preview=True)
     logger.info(f"Зареєстровано: {nickname} (tg={u.id}, lang={lang})")
+
+
+@router.callback_query(F.data == "close_msg")
+async def close_msg_cb(callback: CallbackQuery):
+    try:
+        await callback.message.delete()
+    except Exception:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.answer()
 
 
 @router.message(F.text == "♻️ ПереСтарт")
